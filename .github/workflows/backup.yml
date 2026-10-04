@@ -42,7 +42,7 @@ env:
 jobs:
   backup:
     name: pg_dump + artifact
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     # PostgreSQL temporal para comprobar que el backup se puede restaurar.
