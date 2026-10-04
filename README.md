@@ -22,8 +22,8 @@ Proyecto académico que demuestra una **estrategia completa de backups de base d
 |---|---|
 | Repositorio | <https://github.com/ArturoCutipaFlores/db-backup-strategies> |
 | App desplegada | <https://db-backup-strategies.onrender.com> |
-| Artículo | <https://dev.to/crjl11/backups-de-postgresql-que-se-prueban-solos-pgdump-cifrado-y-verificacion-automatica-con-github-4a84>  
-<https://dev.to/arturo_sebastiancutipaf/borramos-la-tabla-de-produccion-a-proposito-una-prueba-de-desastre-real-con-postgresql-neon-y-52na>|
+| Artículo - Jimenez| <https://dev.to/crjl11/backups-de-postgresql-que-se-prueban-solos-pgdump-cifrado-y-verificacion-automatica-con-github-4a84>|
+| Artículo - Cutipa|<https://dev.to/arturo_sebastiancutipaf/borramos-la-tabla-de-produccion-a-proposito-una-prueba-de-desastre-real-con-postgresql-neon-y-52na>|
 | Video demo | <https://youtu.be/QhqYIKFYg6k?si=GPRl5OPeyuMdTbxM> |
 
 ---
