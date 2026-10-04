@@ -26,6 +26,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       # Se ejecuta automáticamente solo en el PRIMER arranque (BD vacía)
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro # datos de ejemplo (solo local)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tasks -d tasksdb"]
       interval: 5s

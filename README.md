@@ -21,7 +21,7 @@ Proyecto académico que demuestra una **estrategia completa de backups de base d
 | Recurso | URL |
 |---|---|
 | Repositorio | <https://github.com/ArturoCutipaFlores/db-backup-strategies> |
-| App desplegada | `[PENDIENTE: https://db-backup-strategies.onrender.com]` |
+| App desplegada | <https://db-backup-strategies.onrender.com> |
 | Artículo | `[PENDIENTE: enlace al artículo]` |
 | Video demo | `[PENDIENTE: enlace al video]` |
 
@@ -75,7 +75,8 @@ db-backup-strategies/
 ├── scripts/
 │   ├── backup.sh         # pg_dump → backup_YYYYMMDD_HHMMSS.sql.gz
 │   ├── restore.sh        # Restaura .sql.gz / .sql.gz.gpg / .sql / .dump
-│   └── init.sql          # Esquema idempotente + datos de ejemplo
+│   ├── init.sql          # Esquema idempotente (sin datos)
+│   └── seed.sql          # Datos de ejemplo (solo desarrollo local)
 ├── docs/capturas/        # Evidencias para el informe
 ├── Dockerfile
 ├── docker-compose.yml

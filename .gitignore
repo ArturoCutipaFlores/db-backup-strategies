@@ -15,6 +15,7 @@ node_modules/
 backups/
 # ...excepto el esquema de la aplicación, que SÍ debe versionarse
 !scripts/init.sql
+!scripts/seed.sql
 
 # Logs
 *.log
