@@ -1,0 +1,145 @@
+# ==================================================================
+# restore.yml — Restauración MANUAL de la BD de producción (Neon)
+# ------------------------------------------------------------------
+# Actions -> "Restaurar backup de PostgreSQL" -> Run workflow
+#   * run_id   : ID de la ejecución de backup.yml a restaurar
+#                (vacío = el último backup exitoso)
+#   * confirmar: escribir RESTAURAR (protección contra ejecuciones accidentales)
+#
+# Pasos: backup de seguridad del estado actual -> descarga del artifact
+#        -> restore.sh (verifica checksum, descifra, una sola transacción)
+#        -> verificación y medición del tiempo de recuperación (RTO)
+#
+# Usa los mismos secrets que backup.yml: DATABASE_URL y BACKUP_ENCRYPTION_KEY.
+# ==================================================================
+name: Restaurar backup de PostgreSQL
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'ID de la ejecución de "Backup diario" (vacío = último backup exitoso)'
+        required: false
+        default: ''
+      confirmar:
+        description: 'Escribe RESTAURAR para confirmar (reemplaza la tabla tasks en producción)'
+        required: true
+
+concurrency:
+  group: db-backup # no coincide con un backup en curso
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read # necesario para descargar artifacts de otra ejecución
+
+env:
+  PG_MAJOR: '17'
+
+jobs:
+  restore:
+    name: Restaurar en Neon
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Validar confirmación y secrets
+        run: |
+          if [ "${{ inputs.confirmar }}" != "RESTAURAR" ]; then
+            echo "::error::Confirmación incorrecta. Escribe exactamente RESTAURAR."; exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Falta el secret DATABASE_URL."; exit 1
+          fi
+          echo "START_TS=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar postgresql-client ${{ env.PG_MAJOR }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common gnupg
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          echo "PG_BIN_DIR=/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_ENV"
+
+      - name: Elegir el backup a restaurar
+        id: pick
+        run: |
+          RUN_ID="${{ inputs.run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list -R "$GITHUB_REPOSITORY" --workflow backup.yml --status success \
+                     --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No hay ejecuciones exitosas de backup.yml. Ejecuta primero el backup."; exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Backup elegido: ejecución $RUN_ID"
+
+      - name: Estado ANTES de restaurar
+        id: before
+        run: |
+          ROWS=$("$PG_BIN_DIR/psql" "$DATABASE_URL" -tA -c "SELECT COUNT(*) FROM tasks" 2>/dev/null || echo "tabla inexistente")
+          echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
+          echo "Filas en tasks antes de restaurar: $ROWS"
+
+      - name: Backup de seguridad del estado actual
+        # Por si la restauración se hace con el backup equivocado: se puede volver atrás.
+        run: BACKUP_DIR=pre-restore bash scripts/backup.sh
+
+      - name: Guardar backup de seguridad
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-restore-${{ github.run_id }}
+          path: pre-restore/
+          retention-days: 7
+          compression-level: 0
+
+      - name: Descargar artifact del backup
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: backup-*
+          merge-multiple: true
+          path: restore-input
+
+      - name: Restaurar (scripts/restore.sh)
+        id: restore
+        run: |
+          ls -lh restore-input
+          FILE=$(ls -1 restore-input/backup_*.sql.gz restore-input/backup_*.sql.gz.gpg 2>/dev/null | sort | tail -1)
+          [ -n "$FILE" ] || { echo "::error::El artifact no contiene un backup."; exit 1; }
+          echo "file=$(basename "$FILE")" >> "$GITHUB_OUTPUT"
+          bash scripts/restore.sh --yes "$FILE"
+
+      - name: Estado DESPUÉS de restaurar y tiempo de recuperación
+        id: after
+        run: |
+          ROWS=$("$PG_BIN_DIR/psql" "$DATABASE_URL" -tA -c "SELECT COUNT(*) FROM tasks")
+          DURATION=$(( $(date +%s) - START_TS ))
+          echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
+          echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
+          echo "✅ Restauración completada: $ROWS filas en tasks. Duración total del workflow: ${DURATION}s"
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "## ♻️ Restauración de PostgreSQL"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Estado | ${{ job.status }} |"
+            echo "| Backup restaurado | \`${{ steps.restore.outputs.file }}\` (ejecución ${{ steps.pick.outputs.run_id }}) |"
+            echo "| Filas antes | ${{ steps.before.outputs.rows }} |"
+            echo "| Filas después | ${{ steps.after.outputs.rows }} |"
+            echo "| Tiempo de recuperación | ${{ steps.after.outputs.duration }} s |"
+            echo "| Backup de seguridad previo | pre-restore-${{ github.run_id }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

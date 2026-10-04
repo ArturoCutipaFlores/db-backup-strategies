@@ -13,14 +13,14 @@ Proyecto académico que demuestra una **estrategia completa de backups de base d
 
 | Integrante | Rol |
 |---|---|
-| `[Nombre Integrante 1]` | Backend, CI/CD y estrategia de backups |
-| `[Nombre Integrante 2]` | Frontend, documentación y pruebas de restauración |
+| Carlos Jimenez Laura | Backend, CI/CD y estrategia de backups |
+| Arturo Cutipa Flores | Frontend, documentación y pruebas de restauración |
 
 **Enlaces**
 
 | Recurso | URL |
 |---|---|
-| Repositorio | `[PENDIENTE: https://github.com/usuario/db-backup-strategies]` |
+| Repositorio | <https://github.com/ArturoCutipaFlores/db-backup-strategies> |
 | App desplegada | `[PENDIENTE: https://db-backup-strategies.onrender.com]` |
 | Artículo | `[PENDIENTE: enlace al artículo]` |
 | Video demo | `[PENDIENTE: enlace al video]` |
@@ -63,7 +63,8 @@ Proyecto académico que demuestra una **estrategia completa de backups de base d
 db-backup-strategies/
 ├── .github/workflows/
 │   ├── deploy.yml        # CI/CD: tests + build Docker + deploy a Render
-│   └── backup.yml        # Backup diario + verificación + artifact
+│   ├── backup.yml        # Backup diario + verificación + artifact
+│   └── restore.yml       # Restauración manual desde un artifact (con confirmación)
 ├── backend/
 │   ├── index.js          # Servidor Express (API + frontend + errores)
 │   ├── db.js             # Pool de PostgreSQL + inicialización del esquema
@@ -172,6 +173,17 @@ docker compose exec app bash /app/scripts/backup.sh
 > ⚠️ **Neon:** usa la connection string **directa** (sin `-pooler` en el host) para `pg_dump`; PgBouncer en modo transacción no es compatible con volcados.
 
 ## ♻️ Restauración
+
+### Opción 1 — Desde GitHub Actions (recomendada, sin manipular credenciales)
+
+Actions → **Restaurar backup de PostgreSQL** → **Run workflow**:
+
+- `run_id`: ID de la ejecución de *Backup diario* a restaurar (vacío = último backup exitoso).
+- `confirmar`: escribe `RESTAURAR`.
+
+El workflow (`.github/workflows/restore.yml`) hace un **backup de seguridad del estado actual**, descarga el artifact, lo restaura con `restore.sh` (checksum + descifrado + una sola transacción) y muestra en el *Job Summary* las filas antes/después y el **tiempo de recuperación**.
+
+### Opción 2 — Manual con `restore.sh`
 
 ```bash
 # 1. Descarga el artifact desde GitHub (Actions → ejecución → Artifacts) y descomprime el .zip
@@ -308,8 +320,8 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 1. Anota cuántas tareas hay (`/api/health` muestra el total). Ejecuta un backup (paso e).
 2. **Desastre:** en el SQL Editor de Neon ejecuta `DROP TABLE tasks;` (o `DELETE FROM tasks;`).
 3. Comprueba que la app falla o está vacía → `/api/health` devuelve `database: down` o `tasks: 0`. Inicia el cronómetro (RTO).
-4. Descarga el artifact y descomprímelo en `backups/`.
-5. Restaura:
+4. **Restaura desde GitHub Actions:** Actions → *Restaurar backup de PostgreSQL* → Run workflow → `confirmar = RESTAURAR`. Revisa el *Job Summary* (filas antes/después y tiempo). Salta al paso 6.
+5. (Alternativa manual) Descarga el artifact, descomprímelo en `backups/` y restaura:
    ```bash
    export DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require"   # directa
    export BACKUP_ENCRYPTION_KEY="..."                                        # si está cifrado
