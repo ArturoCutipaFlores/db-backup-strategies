@@ -1,0 +1,11 @@
+# Evita copiar a la imagen archivos innecesarios o sensibles
+**/node_modules
+**/.env
+backups
+*.sql.gz
+*.sql.gz.gpg
+*.dump
+.git
+.github
+docs
+*.md

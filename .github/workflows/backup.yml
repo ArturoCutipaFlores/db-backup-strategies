@@ -1,0 +1,166 @@
+# ==================================================================
+# backup.yml — Backup automático diario de la BD de producción (Neon)
+# ------------------------------------------------------------------
+#  * Programado: todos los días a las 02:00 UTC (21:00 hora de Perú).
+#  * Manual: pestaña Actions -> "Backup diario de PostgreSQL" -> Run workflow.
+#
+#  Pasos: pg_dump -> gzip -> (cifrado GPG opcional) -> checksum
+#         -> VERIFICACIÓN restaurando en un PostgreSQL temporal
+#         -> artifact (7 días) -> S3 opcional
+#
+#  Secrets:
+#    DATABASE_URL            (obligatorio) conexión DIRECTA de Neon
+#    BACKUP_ENCRYPTION_KEY   (opcional, MUY recomendado si el repo es público)
+#    S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#    AWS_DEFAULT_REGION, S3_ENDPOINT_URL   (opcionales, copia externa)
+# ==================================================================
+name: Backup diario de PostgreSQL
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 02:00 UTC todos los días
+  workflow_dispatch:
+    inputs:
+      verify_restore:
+        description: 'Verificar el backup restaurándolo en una BD temporal'
+        type: boolean
+        default: true
+
+# Nunca dos backups a la vez
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Versión mayor del cliente PostgreSQL. pg_dump debe ser >= que la del servidor
+  # (Neon usa PostgreSQL 17 por defecto en proyectos nuevos).
+  PG_MAJOR: '17'
+
+jobs:
+  backup:
+    name: pg_dump + artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # PostgreSQL temporal para comprobar que el backup se puede restaurar.
+    # "Un backup que no se ha probado restaurar no es un backup".
+    services:
+      verify-db:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: restore_check
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+      BACKUP_DIR: backups
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || 'us-east-1' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Falta el secret DATABASE_URL (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+          if [ -z "$BACKUP_ENCRYPTION_KEY" ]; then
+            echo "::warning::BACKUP_ENCRYPTION_KEY no está definido: el backup se guardará SIN cifrar."
+          fi
+
+      - name: Instalar postgresql-client ${{ env.PG_MAJOR }}
+        run: |
+          # Repositorio oficial PGDG para tener la misma versión mayor que Neon
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common gnupg
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          echo "PG_BIN_DIR=/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_ENV"
+          "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_dump" --version
+
+      - name: Calcular fecha del backup
+        id: date
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Ejecutar backup (scripts/backup.sh)
+        id: backup
+        run: bash scripts/backup.sh
+
+      - name: Mostrar tamaño y fecha del backup
+        run: |
+          echo "=============================================="
+          echo " Archivo : ${{ steps.backup.outputs.backup_name }}"
+          echo " Tamaño  : ${{ steps.backup.outputs.backup_size }} (${{ steps.backup.outputs.backup_bytes }} bytes)"
+          echo " Fecha   : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo " SHA-256 : ${{ steps.backup.outputs.backup_sha256 }}"
+          echo "=============================================="
+          ls -lh "$BACKUP_DIR"
+
+      - name: Verificar backup restaurándolo en BD temporal
+        id: verify
+        if: github.event_name == 'schedule' || inputs.verify_restore
+        env:
+          TARGET_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/restore_check
+        run: |
+          bash scripts/restore.sh --yes "${{ steps.backup.outputs.backup_file }}"
+          ROWS=$("$PG_BIN_DIR/psql" "$TARGET_DATABASE_URL" -tA -c "SELECT COUNT(*) FROM tasks")
+          echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
+          echo "✅ Backup verificado: $ROWS filas restauradas en la tabla tasks"
+
+      - name: Subir backup como artifact (retención 7 días)
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ steps.date.outputs.date }}
+          path: |
+            ${{ env.BACKUP_DIR }}/backup_*.sql.gz*
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0 # el archivo ya está comprimido con gzip
+
+      - name: Copia externa en S3 / almacenamiento compatible (opcional)
+        if: env.S3_BUCKET != ''
+        run: |
+          ENDPOINT_ARGS=()
+          # Para Cloudflare R2, Backblaze B2, MinIO, etc. se define S3_ENDPOINT_URL
+          if [ -n "$S3_ENDPOINT_URL" ]; then ENDPOINT_ARGS=(--endpoint-url "$S3_ENDPOINT_URL"); fi
+          FILE="${{ steps.backup.outputs.backup_file }}"
+          DEST="s3://${S3_BUCKET}/postgres/$(date -u +%Y/%m)/"
+          aws s3 cp "$FILE"        "$DEST" "${ENDPOINT_ARGS[@]}"
+          aws s3 cp "$FILE.sha256" "$DEST" "${ENDPOINT_ARGS[@]}"
+          echo "Backup copiado a $DEST"
+
+      - name: Resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🗄️ Backup de PostgreSQL"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Estado | ${{ job.status }} |"
+            echo "| Disparador | ${{ github.event_name }} |"
+            echo "| Archivo | \`${{ steps.backup.outputs.backup_name }}\` |"
+            echo "| Tamaño | ${{ steps.backup.outputs.backup_size }} |"
+            echo "| SHA-256 | \`${{ steps.backup.outputs.backup_sha256 }}\` |"
+            echo "| Fecha | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |"
+            echo "| Verificación de restauración | ${{ steps.verify.outcome }} (${{ steps.verify.outputs.rows || '-' }} filas) |"
+            echo "| Artifact | backup-${{ steps.date.outputs.date }} (retención 7 días) |"
+          } >> "$GITHUB_STEP_SUMMARY"

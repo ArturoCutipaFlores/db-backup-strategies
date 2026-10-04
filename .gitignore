@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno y secretos (NUNCA subir)
+.env
+.env.*
+!.env.example
+
+# Backups y volcados de base de datos (pueden contener datos sensibles)
+*.sql
+*.sql.gz
+*.sql.gz.gpg
+*.sha256
+*.dump
+backups/
+# ...excepto el esquema de la aplicación, que SÍ debe versionarse
+!scripts/init.sql
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

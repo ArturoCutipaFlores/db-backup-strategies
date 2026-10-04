@@ -1,0 +1,56 @@
+# ==================================================================
+# docker-compose.yml — Entorno de DESARROLLO LOCAL
+# ------------------------------------------------------------------
+#   docker compose up --build        -> http://localhost:3000
+#
+# En producción NO se usa este archivo: la app corre en Render y la BD en Neon.
+# ==================================================================
+services:
+  # ---------- Base de datos PostgreSQL local ----------
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tasks
+      POSTGRES_PASSWORD: tasks_password # solo desarrollo local
+      POSTGRES_DB: tasksdb
+    ports:
+      # Puerto del HOST 5433 para no chocar con otro PostgreSQL que use 5432.
+      # La app NO usa este puerto (se conecta por la red interna a postgres:5432);
+      # sirve para conectarte con DBeaver/pgAdmin/psql desde tu PC.
+      # Cambiarlo: POSTGRES_HOST_PORT=5434 docker compose up
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      # Volumen con nombre: los datos sobreviven a "docker compose down"
+      # (se borran solo con "docker compose down -v").
+      - pgdata:/var/lib/postgresql/data
+      # Se ejecuta automáticamente solo en el PRIMER arranque (BD vacía)
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasks -d tasksdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Aplicación Node.js (API + frontend) ----------
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # "postgres" es el nombre del servicio dentro de la red de Docker
+      DATABASE_URL: postgresql://tasks:tasks_password@postgres:5432/tasksdb
+      DB_SSL: "false" # el PostgreSQL local no usa TLS (Neon sí)
+      PORT: 3000
+      NODE_ENV: development
+      BACKUP_DIR: /app/backups
+    ports:
+      - "3000:3000"
+    volumes:
+      # Los backups creados dentro del contenedor aparecen en ./backups del host
+      - ./backups:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

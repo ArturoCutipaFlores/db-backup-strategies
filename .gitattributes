@@ -1,0 +1,6 @@
+# Fuerza finales de línea LF en scripts: si Git en Windows los convierte a CRLF,
+# bash falla en Linux/Docker con errores como "$'\r': command not found".
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.yml  text eol=lf
+Dockerfile text eol=lf

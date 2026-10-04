@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gestor de Tareas · DB Backup Strategies</title>
+  <style>
+    /* ---------- Variables de diseño ---------- */
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --success: #059669;
+      --danger: #dc2626;
+      --warning: #d97706;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 4px 16px rgba(0, 0, 0, .04);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #1e293b;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --border: #334155;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+    header h1 { font-size: 1.6rem; margin: 0; }
+    header p  { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
+
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: .8rem; padding: 4px 10px; border-radius: 999px;
+      background: var(--card); border: 1px solid var(--border);
+    }
+    .status-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .status-pill.ok .dot   { background: var(--success); }
+    .status-pill.down .dot { background: var(--danger); }
+
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+
+    /* ---------- Formulario ---------- */
+    form { display: grid; gap: 12px; margin-bottom: 24px; }
+    label { font-size: .85rem; font-weight: 600; }
+    input, textarea {
+      width: 100%; padding: 10px 12px; font: inherit; color: inherit;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    }
+    input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+    textarea { resize: vertical; min-height: 70px; }
+
+    button {
+      font: inherit; cursor: pointer; border: none; border-radius: 8px;
+      padding: 10px 16px; font-weight: 600; transition: background .15s, opacity .15s;
+    }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-sm { padding: 6px 10px; font-size: .8rem; }
+    .btn-success { background: transparent; color: var(--success); border: 1px solid var(--success); }
+    .btn-warning { background: transparent; color: var(--warning); border: 1px solid var(--warning); }
+    .btn-danger  { background: transparent; color: var(--danger);  border: 1px solid var(--danger); }
+    .btn-success:hover { background: var(--success); color: #fff; }
+    .btn-warning:hover { background: var(--warning); color: #fff; }
+    .btn-danger:hover  { background: var(--danger);  color: #fff; }
+
+    /* ---------- Toolbar / filtros ---------- */
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .filters { display: flex; gap: 6px; }
+    .filters button { background: var(--card); color: var(--muted); border: 1px solid var(--border); padding: 6px 12px; font-size: .85rem; }
+    .filters button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .counters { color: var(--muted); font-size: .85rem; }
+
+    /* ---------- Lista de tareas ---------- */
+    ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    .task { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+    .task-body { min-width: 0; flex: 1; }
+    .task-title { font-weight: 600; margin: 0; word-wrap: break-word; }
+    .task-desc  { margin: 4px 0 0; color: var(--muted); font-size: .9rem; white-space: pre-wrap; word-wrap: break-word; }
+    .task-meta  { margin-top: 8px; font-size: .75rem; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .badge { padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; }
+    .badge.pendiente  { background: rgba(217, 119, 6, .12); color: var(--warning); }
+    .badge.completada { background: rgba(5, 150, 105, .12); color: var(--success); }
+    .task.done .task-title { text-decoration: line-through; color: var(--muted); }
+    .task-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+    .empty { text-align: center; color: var(--muted); padding: 32px 0; }
+
+    /* ---------- Notificaciones ---------- */
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(120%);
+      background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 8px;
+      font-size: .9rem; transition: transform .25s; max-width: calc(100% - 32px);
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.error { background: var(--danger); color: #fff; }
+
+    @media (max-width: 560px) {
+      .task { flex-direction: column; }
+      .task-actions { width: 100%; }
+      .task-actions button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <div>
+        <h1>📋 Gestor de Tareas</h1>
+        <p>Demo de estrategias de backup con PostgreSQL · Express · Neon · Render</p>
+      </div>
+      <span id="health" class="status-pill" title="Estado de la API y la base de datos">
+        <span class="dot"></span><span id="health-text">Comprobando…</span>
+      </span>
+    </header>
+
+    <!-- Formulario de creación -->
+    <section class="card" style="margin-bottom: 24px;">
+      <form id="task-form" style="margin: 0;">
+        <div>
+          <label for="title">Título *</label>
+          <input id="title" name="title" type="text" maxlength="200" placeholder="¿Qué hay que hacer?" required />
+        </div>
+        <div>
+          <label for="description">Descripción</label>
+          <textarea id="description" name="description" maxlength="2000" placeholder="Detalles opcionales"></textarea>
+        </div>
+        <div>
+          <button id="submit-btn" class="btn-primary" type="submit">Agregar tarea</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Filtros y contadores -->
+    <div class="toolbar">
+      <div class="filters" role="group" aria-label="Filtrar tareas">
+        <button type="button" data-filter="todas" class="active">Todas</button>
+        <button type="button" data-filter="pendiente">Pendientes</button>
+        <button type="button" data-filter="completada">Completadas</button>
+      </div>
+      <span id="counters" class="counters"></span>
+    </div>
+
+    <!-- Lista -->
+    <ul id="task-list" aria-live="polite"></ul>
+  </main>
+
+  <div id="toast" role="status"></div>
+
+  <script>
+    // ---------------------------------------------------------------
+    // Configuración: la API vive en el mismo origen que este HTML
+    // (Express sirve el frontend), por eso basta una ruta relativa.
+    // ---------------------------------------------------------------
+    const API = '/api/tasks';
+
+    // Estado de la UI
+    let tasks = [];
+    let currentFilter = 'todas';
+
+    // Referencias al DOM
+    const form = document.getElementById('task-form');
+    const titleInput = document.getElementById('title');
+    const descInput = document.getElementById('description');
+    const submitBtn = document.getElementById('submit-btn');
+    const list = document.getElementById('task-list');
+    const counters = document.getElementById('counters');
+    const toastEl = document.getElementById('toast');
+
+    /** Muestra una notificación temporal. */
+    let toastTimer;
+    function toast(message, isError = false) {
+      toastEl.textContent = message;
+      toastEl.className = 'show' + (isError ? ' error' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => (toastEl.className = ''), 3000);
+    }
+
+    /** Escapa HTML para evitar XSS al pintar texto del usuario. */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text ?? '';
+      return div.innerHTML;
+    }
+
+    /**
+     * Envoltorio de fetch: envía/recibe JSON y convierte errores HTTP
+     * en excepciones con el mensaje que devuelve la API.
+     */
+    async function api(url, options = {}) {
+      const res = await fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+      return data;
+    }
+
+    // ------------------------- CRUD -------------------------
+
+    async function loadTasks() {
+      try {
+        tasks = await api(API);
+        render();
+      } catch (err) {
+        list.innerHTML = `<li class="card empty">No se pudieron cargar las tareas: ${escapeHtml(err.message)}</li>`;
+      }
+    }
+
+    async function createTask(title, description) {
+      const task = await api(API, {
+        method: 'POST',
+        body: JSON.stringify({ title, description }),
+      });
+      tasks.unshift(task);
+      render();
+      toast('Tarea creada ✔');
+    }
+
+    async function toggleTask(id) {
+      const task = tasks.find((t) => t.id === id);
+      const status = task.status === 'completada' ? 'pendiente' : 'completada';
+      const updated = await api(`${API}/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status }),
+      });
+      Object.assign(task, updated);
+      render();
+      toast(status === 'completada' ? 'Tarea completada 🎉' : 'Tarea marcada como pendiente');
+    }
+
+    async function deleteTask(id) {
+      if (!confirm('¿Eliminar esta tarea? Esta acción no se puede deshacer (salvo restaurando un backup 😉).')) return;
+      await api(`${API}/${id}`, { method: 'DELETE' });
+      tasks = tasks.filter((t) => t.id !== id);
+      render();
+      toast('Tarea eliminada');
+    }
+
+    // ------------------------- Render -------------------------
+
+    function render() {
+      const pending = tasks.filter((t) => t.status === 'pendiente').length;
+      counters.textContent = `${tasks.length} total · ${pending} pendientes · ${tasks.length - pending} completadas`;
+
+      const visible = currentFilter === 'todas' ? tasks : tasks.filter((t) => t.status === currentFilter);
+
+      if (visible.length === 0) {
+        list.innerHTML = '<li class="card empty">No hay tareas para mostrar.</li>';
+        return;
+      }
+
+      list.innerHTML = visible
+        .map((t) => {
+          const done = t.status === 'completada';
+          const date = new Date(t.created_at).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
+          return `
+            <li class="card task ${done ? 'done' : ''}" data-id="${t.id}">
+              <div class="task-body">
+                <p class="task-title">${escapeHtml(t.title)}</p>
+                ${t.description ? `<p class="task-desc">${escapeHtml(t.description)}</p>` : ''}
+                <div class="task-meta">
+                  <span class="badge ${t.status}">${t.status}</span>
+                  <span>#${t.id}</span>
+                  <span>Creada: ${date}</span>
+                </div>
+              </div>
+              <div class="task-actions">
+                <button class="btn-sm ${done ? 'btn-warning' : 'btn-success'}" data-action="toggle">
+                  ${done ? '↺ Reabrir' : '✓ Completar'}
+                </button>
+                <button class="btn-sm btn-danger" data-action="delete">✕ Eliminar</button>
+              </div>
+            </li>`;
+        })
+        .join('');
+    }
+
+    // ------------------------- Health check -------------------------
+
+    async function checkHealth() {
+      const pill = document.getElementById('health');
+      const text = document.getElementById('health-text');
+      try {
+        const data = await api('/api/health');
+        pill.className = 'status-pill ok';
+        text.textContent = `API y BD en línea · ${data.tasks} tareas`;
+      } catch {
+        pill.className = 'status-pill down';
+        text.textContent = 'BD no disponible';
+      }
+    }
+
+    // ------------------------- Eventos -------------------------
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = titleInput.value.trim();
+      if (!title) return toast('El título es obligatorio', true);
+      submitBtn.disabled = true;
+      try {
+        await createTask(title, descInput.value.trim());
+        form.reset();
+        titleInput.focus();
+        checkHealth();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    // Delegación de eventos: un solo listener para todos los botones de la lista
+    list.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const id = Number(btn.closest('li').dataset.id);
+      btn.disabled = true;
+      try {
+        if (btn.dataset.action === 'toggle') await toggleTask(id);
+        if (btn.dataset.action === 'delete') { await deleteTask(id); checkHealth(); }
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.querySelectorAll('.filters button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filters button').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        render();
+      });
+    });
+
+    // Carga inicial
+    loadTasks();
+    checkHealth();
+  </script>
+</body>
+</html>
