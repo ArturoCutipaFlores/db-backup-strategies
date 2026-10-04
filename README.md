@@ -22,7 +22,7 @@ Proyecto académico que demuestra una **estrategia completa de backups de base d
 |---|---|
 | Repositorio | <https://github.com/ArturoCutipaFlores/db-backup-strategies> |
 | App desplegada | <https://db-backup-strategies.onrender.com> |
-| Artículo | `[PENDIENTE: enlace al artículo]` |
+| Artículo | [docs/articulo.md](docs/articulo.md) · publicado: `[PENDIENTE: enlace]` |
 | Video demo | `[PENDIENTE: enlace al video]` |
 
 ---
@@ -246,6 +246,26 @@ Combinar ambos aplica la **regla 3-2-1**: 3 copias (Neon + artifacts de GitHub +
 ### Verificación
 
 Cada backup programado se **restaura automáticamente** en un PostgreSQL temporal del runner. Un backup que nunca se probó restaurar no es un backup.
+
+---
+
+## 🧪 Resultados de la prueba de desastre (producción, 04/10/2026)
+
+| # | Paso | Resultado | Evidencia |
+|---|---|---|---|
+| 1 | App en Render con 5 tareas (incluye "Tarea de Carlos" y "Tarea de Arturo") | ✅ | [01](docs/capturas/01-app-render-5-tareas.jpg) |
+| 2 | Backup manual (`backup.yml`): `pg_dump` 17 → gzip → GPG AES-256 → SHA-256 → restauración de prueba | ✅ 44 s · 4 KB · verificación **5 filas** | [02](docs/capturas/02-backup-verificado-5-filas.jpg) |
+| 3 | Desastre: `DROP TABLE tasks;` en Neon | ✅ | [03](docs/capturas/03-desastre-drop-table-neon.jpg) |
+| 4 | La app falla (health check 503 → Render responde 502 y reinicia la instancia) | ✅ | [04](docs/capturas/04-app-caida-502.jpg) |
+| 5 | Tras el reinicio la app recrea la tabla **vacía**: datos perdidos | ✅ 0 tareas | [05](docs/capturas/05-app-vacia-0-tareas.jpg) |
+| 6 | Restauración (`restore.yml`): backup de seguridad + descarga + descifrado + restore transaccional | ✅ 24 s · **0 → 5 filas** | [06](docs/capturas/06-restauracion-0-a-5-filas.jpg) |
+| 7 | App recuperada con las 5 tareas y sus IDs originales | ✅ | [07](docs/capturas/07-app-recuperada-5-tareas.jpg) |
+| 8 | Todos los workflows en verde | ✅ | [08](docs/capturas/08-github-actions-todo-verde.jpg) |
+
+**Métricas medidas**
+
+- **RPO real de la prueba:** 0 registros perdidos (no hubo escrituras entre el backup de las 02:05 UTC y el desastre). RPO de diseño: 24 h.
+- **RTO real:** **≈ 3 min** de extremo a extremo (detección + reinicio de Render + restauración); el workflow de restauración tarda **24 s** (18 s de recuperación efectiva). Objetivo: < 15 min ✅.
 
 ---
 
